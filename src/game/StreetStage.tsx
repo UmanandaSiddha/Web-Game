@@ -188,8 +188,8 @@ export function StreetStage() {
         intensity={2.2}
         color="#ffe8c4"
         castShadow
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
+        shadow-mapSize-width={1536}
+        shadow-mapSize-height={1536}
         shadow-camera-near={1}
         shadow-camera-far={30}
         shadow-camera-left={-9}

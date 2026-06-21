@@ -42,6 +42,14 @@ export class Fighter {
   private atk: { def: MoveDef; dur: number; hitFired: boolean; canCancel: boolean } | null = null;
   private pendingHit: MoveDef | null = null;
 
+  // death topple (the death clip alone doesn't lay the body down, so we pivot it on the floor)
+  private deathT = 0;
+  private deathDir: 1 | -1 = 1;
+  // get-up: smoothly un-topple from lying to standing at the start of the next round
+  private rising = false;
+  private riseT = 0;
+  private static readonly LIE = Math.PI * 0.46; // toppled angle
+
   constructor(loaded: LoadedCharacter, opts: FighterOpts, maxHealth: number) {
     this.inner = loaded.make();
     if (opts.tint !== undefined) {
@@ -112,36 +120,54 @@ export class Fighter {
   };
 
   // ---------------------------------------------------------------- intents
+  /** True while the fighter can accept a fresh action (free, or in an attack's cancel window). */
+  private get canAct() {
+    return !this.locked || !!this.atk?.canCancel;
+  }
+  private cancelAttack() {
+    if (this.atk) {
+      this.atk = null;
+      this.locked = false;
+    }
+  }
+
   moveIntent(worldDir: -1 | 0 | 1) {
-    if (this.locked || this.dead || this.blocking || !this.onGround) return;
+    if (this.dead || this.blocking || !this.onGround) return;
     if (worldDir === 0) {
+      // never interrupt a committed attack just because no key is held
+      if (this.locked) return;
       this.vx = 0;
-      this.fadeTo("idle");
+      if (this.state === "walkForward" || this.state === "walkBack") this.fadeTo("idle");
       return;
     }
+    if (this.locked && !this.atk?.canCancel) return; // hit-stun / early attack frames
+    this.cancelAttack(); // walk-cancel for fluid movement
     this.vx = worldDir * WORLD.walkSpeed;
     this.fadeTo(worldDir * this.facing > 0 ? "walkForward" : "walkBack");
   }
 
-  jump() {
-    if (this.locked || this.dead || !this.onGround || this.blocking) return;
+  jump(): boolean {
+    if (this.dead || !this.onGround || this.blocking || !this.canAct) return false;
+    this.cancelAttack();
     this.vy = WORLD.jumpSpeed;
     this.onGround = false;
     this.fadeTo("jump");
+    return true;
   }
 
-  dodge(now: number) {
-    if (this.dead || !this.onGround || (this.locked && !this.atk?.canCancel)) return;
+  dodge(now: number): boolean {
+    if (this.dead || !this.onGround || !this.canAct) return false;
     this.locked = true;
     this.blocking = false;
     this.atk = null;
     this.invulnUntil = now + WORLD.dodgeTime;
     this.vx = -this.facing * WORLD.dodgeSpeed;
     this.fadeTo("dodge");
+    return true;
   }
 
-  backflip(now: number) {
-    if (this.dead || !this.onGround || (this.locked && !this.atk?.canCancel)) return;
+  backflip(now: number): boolean {
+    if (this.dead || !this.onGround || !this.canAct) return false;
     this.locked = true;
     this.blocking = false;
     this.atk = null;
@@ -150,6 +176,7 @@ export class Fighter {
     this.vy = WORLD.jumpSpeed * 0.7;
     this.onGround = false;
     this.fadeTo("backflip");
+    return true;
   }
 
   setBlock(on: boolean) {
@@ -163,17 +190,17 @@ export class Fighter {
     return this.blocking;
   }
 
-  attack(moveId: string) {
+  attack(moveId: string): boolean {
     const def = MOVE_BY_ID[moveId];
-    if (!def) return;
-    const canStart = !this.dead && !this.blocking && this.onGround && (!this.locked || !!this.atk?.canCancel);
-    if (!canStart) return;
+    if (!def) return false;
+    if (this.dead || this.blocking || !this.onGround || !this.canAct) return false;
     const action = this.actions[def.id as AnimState];
     const dur = action.getClip().duration / (TIMESCALE[def.id] ?? 1);
     this.atk = { def, dur, hitFired: false, canCancel: false };
     this.locked = true;
     this.vx = 0;
     this.fadeTo(def.id as AnimState);
+    return true;
   }
 
   /** Returns the move exactly once, on the frame the blow should connect. */
@@ -203,7 +230,9 @@ export class Fighter {
     if (this.dead) return;
     this.dead = true;
     this.locked = true;
-    this.vx = fromDir * 1.6;
+    this.deathT = 0;
+    this.deathDir = fromDir; // topple in the knockback direction
+    this.vx = fromDir * 1.4;
     this.fadeTo("ko");
   }
 
@@ -213,7 +242,7 @@ export class Fighter {
     this.fadeTo("victory");
   }
 
-  reset(startX: number, facing: 1 | -1) {
+  reset(startX: number, facing: 1 | -1, rising = false) {
     this.health = this.maxHealth;
     this.dead = false;
     this.locked = false;
@@ -227,14 +256,39 @@ export class Fighter {
     this.x = startX;
     this.facing = facing;
     this.targetFacing = facing;
+    this.hitstunUntil = 0;
+    this.deathT = 0;
     this.root.position.set(startX, WORLD.groundY, 0);
     this.inner.rotation.y = facing > 0 ? Math.PI / 2 : -Math.PI / 2;
+    // hard-clear any clamped KO/victory pose so the restart never shows a glitched body
+    this.mixer.stopAllAction();
     this.playNow("idle");
+    // the loser of the previous round starts lying down and smoothly stands up
+    this.rising = rising;
+    this.riseT = 0;
+    this.root.rotation.set(0, 0, rising ? -this.deathDir * Fighter.LIE : 0);
   }
 
   // ---------------------------------------------------------------- per-frame
   update(dt: number, now: number, foeX: number) {
     this.mixer.update(dt);
+
+    // death topple: pivot the whole body backward around the feet so it lies on the floor
+    if (this.dead) {
+      this.deathT = Math.min(1, this.deathT + dt / 0.5);
+      const ease = this.deathT * this.deathT * (3 - 2 * this.deathT); // smoothstep
+      this.root.rotation.z = -this.deathDir * ease * Fighter.LIE;
+    }
+    // get-up: reverse the topple smoothly so the loser stands up instead of snapping upright
+    else if (this.rising) {
+      this.riseT = Math.min(1, this.riseT + dt / 0.6);
+      const ease = this.riseT * this.riseT * (3 - 2 * this.riseT);
+      this.root.rotation.z = -this.deathDir * (1 - ease) * Fighter.LIE;
+      if (this.riseT >= 1) {
+        this.rising = false;
+        this.root.rotation.z = 0;
+      }
+    }
 
     const wantFace: 1 | -1 = foeX >= this.x ? 1 : -1;
     if (!this.locked && this.onGround) this.targetFacing = wantFace;

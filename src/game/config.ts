@@ -7,12 +7,12 @@ export const WORLD = {
   groundY: 0,
   arenaHalfWidth: 6.0,
   startX: 1.9,
-  gravity: -27, // snappier fall
-  jumpSpeed: 9.6,
-  walkSpeed: 4.2, // fast approach
+  gravity: -23, // smooth, readable jump arc
+  jumpSpeed: 8.8,
+  walkSpeed: 3.5, // controllable approach (less foot-slide)
   fighterHeight: 1.85,
-  facingLerp: 18,
-  hitStun: 200, // shorter stun -> faster back-and-forth
+  facingLerp: 16,
+  hitStun: 220, // brief stun -> fast back-and-forth but readable
   blockDamageMul: 0.15,
   dodgeSpeed: 7.5,
   dodgeTime: 360, // ms of i-frames on dodge
@@ -36,8 +36,8 @@ export const PROJECTILE = {
   spawnHeight: 1.05,
 };
 
-// crossfade duration (seconds) between animation states — short = snappy
-export const CROSSFADE = 0.1;
+// crossfade duration (seconds) between animation states — smooth but responsive
+export const CROSSFADE = 0.14;
 
 // ----------------------------------------------------------------------------
 //  ANIMATION CLIP MANIFEST  (state -> file in /public/models)
@@ -61,9 +61,9 @@ export const CLIPS: ClipDef[] = [
   { state: "block", file: "center_block.fbx", loop: false, rootMotion: "strip", timeScale: 1.2, fallback: "idle" },
   { state: "hit", file: "head_hit.fbx", loop: false, rootMotion: "strip", timeScale: 1.3, fallback: "idle" },
   { state: "stunned", file: "Stunned.fbx", loop: false, rootMotion: "strip", timeScale: 1.2, fallback: "hit" },
-  { state: "ko", file: "Dying.fbx", loop: false, rootMotion: "strip", timeScale: 1.1, fallback: "hit" },
+  { state: "ko", file: "Dying.fbx", loop: false, rootMotion: "keep", timeScale: 1.05, fallback: "hit" },
   { state: "victory", file: "Victory.fbx", loop: false, rootMotion: "strip", timeScale: 1, fallback: "idle" },
-  { state: "getup", file: "getting_up.fbx", loop: false, rootMotion: "strip", timeScale: 1.2, fallback: "idle" },
+  { state: "getup", file: "getting_up.fbx", loop: false, rootMotion: "strip", timeScale: 1.15, fallback: "idle" },
   { state: "dodge", file: "Dodging.fbx", loop: false, rootMotion: "strip", timeScale: 1.3, fallback: "idle" },
   { state: "backflip", file: "Backflip.fbx", loop: false, rootMotion: "strip", timeScale: 1.2, fallback: "jump" },
   // attacks

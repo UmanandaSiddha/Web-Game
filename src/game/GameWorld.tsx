@@ -4,13 +4,13 @@ import * as THREE from "three";
 import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Fighter } from "./Fighter";
-import { ImpactFX } from "./ImpactFX";
 import { Projectiles } from "./Projectiles";
 import type { LoadResult } from "./loadAssets";
 import type { GameMode, GamePhase, HudSnapshot } from "./types";
 import { PROJECTILE, RULES, WORLD } from "./config";
 import { attachInput, readInput, clearEdges } from "./input";
 import { bus } from "./EventBus";
+import { sfx } from "./Sound";
 
 const NAMES = { p1: "PLAYER 1", cpu: "C.P.U." };
 const CAM_BASE = new THREE.Vector3(0, 1.5, 5.7);
@@ -31,6 +31,7 @@ interface MatchState {
   comboMs: { p1: number; p2: number };
   shake: number;
   matchWinner: "p1" | "p2" | null;
+  wiped: boolean; // emitted the between-rounds black wipe yet?
 }
 
 interface AIState {
@@ -43,7 +44,6 @@ export function GameWorld({ assets, mode, paused }: { assets: LoadResult; mode: 
   void mode; // P2 is always CPU for now (netplay later reuses P1 controls)
   const { camera, scene } = useThree();
 
-  const fx = useMemo(() => new ImpactFX(12), []);
   const shots = useMemo(() => new Projectiles(6), []);
   const f1 = useMemo(() => new Fighter(assets.p1, { facing: 1, startX: -WORLD.startX, tint: "#28a8d8" }, RULES.maxHealth), [assets]);
   const f2 = useMemo(() => new Fighter(assets.p2, { facing: -1, startX: WORLD.startX, tint: "#e0556e" }, RULES.maxHealth), [assets]);
@@ -55,13 +55,15 @@ export function GameWorld({ assets, mode, paused }: { assets: LoadResult; mode: 
     return {
       phase: "intro", round: 1, timer: RULES.roundTime, p1Rounds: 0, p2Rounds: 0,
       announce: "ROUND 1", banner: 1.2, phaseT: 1.2,
-      combo: { p1: 0, p2: 0 }, comboMs: { p1: 0, p2: 0 }, shake: 0, matchWinner: null,
+      combo: { p1: 0, p2: 0 }, comboMs: { p1: 0, p2: 0 }, shake: 0, matchWinner: null, wiped: false,
     };
   }
 
   function startRound(m: MatchState) {
-    f1.reset(-WORLD.startX, 1);
-    f2.reset(WORLD.startX, -1);
+    // the fighter who lost the previous round rises with a get-up animation (mid-match only)
+    const rise = m.round > 1;
+    f1.reset(-WORLD.startX, 1, rise && f1.dead);
+    f2.reset(WORLD.startX, -1, rise && f2.dead);
     shots.reset();
     m.phase = "intro";
     m.timer = RULES.roundTime;
@@ -70,10 +72,11 @@ export function GameWorld({ assets, mode, paused }: { assets: LoadResult; mode: 
     m.phaseT = 1.1;
     m.combo = { p1: 0, p2: 0 };
     m.comboMs = { p1: 0, p2: 0 };
+    m.wiped = false;
   }
 
   useEffect(() => {
-    scene.add(f1.root, f2.root, fx.group, shots.group);
+    scene.add(f1.root, f2.root, shots.group);
     const detach = attachInput();
     clearEdges();
     camera.position.copy(CAM_BASE);
@@ -91,10 +94,10 @@ export function GameWorld({ assets, mode, paused }: { assets: LoadResult; mode: 
     return () => {
       detach();
       offRematch();
-      scene.remove(f1.root, f2.root, fx.group, shots.group);
+      scene.remove(f1.root, f2.root, shots.group);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [f1, f2, fx, shots]);
+  }, [f1, f2, shots]);
 
   useFrame((_, rawDt) => {
     const dt = Math.min(rawDt, 1 / 30);
@@ -108,6 +111,7 @@ export function GameWorld({ assets, mode, paused }: { assets: LoadResult; mode: 
         m.phase = "fight";
         m.announce = "FIGHT!";
         m.banner = 0.7;
+        sfx.play("fight");
       }
     } else if (m.phase === "fight") {
       if (m.banner > 0) {
@@ -135,10 +139,16 @@ export function GameWorld({ assets, mode, paused }: { assets: LoadResult; mode: 
       }
     } else if (m.phase === "roundEnd") {
       m.phaseT -= dt;
+      // fire a black wipe shortly before the reset so the loser standing back up is hidden
+      if (!m.matchWinner && !m.wiped && m.phaseT <= 0.55) {
+        m.wiped = true;
+        bus.emit("roundWipe", undefined);
+      }
       if (m.phaseT <= 0) {
         if (m.matchWinner) {
           m.phase = "matchOver";
           m.announce = `${m.matchWinner === "p1" ? NAMES.p1 : NAMES.cpu} WINS`;
+          sfx.play("win");
         } else {
           m.round += 1;
           startRound(m);
@@ -161,14 +171,15 @@ export function GameWorld({ assets, mode, paused }: { assets: LoadResult; mode: 
         m.combo[who] += 1;
         m.comboMs[who] = RULES.comboWindow;
       }
-      m.shake = Math.min(1.2, m.shake + 0.8);
-      fx.burst(h.pos, true, "#ffba4a");
+      if (dealt > 0) {
+        m.shake = Math.min(1.0, m.shake + 0.6);
+        sfx.play(wasBlocking ? "block" : "hit");
+      }
     }
 
-    if (m.shake > 0) m.shake = Math.max(0, m.shake - dt * 3.0);
-    camera.position.set(CAM_BASE.x + (Math.random() - 0.5) * m.shake * 0.5, CAM_BASE.y + (Math.random() - 0.5) * m.shake * 0.4, CAM_BASE.z);
+    if (m.shake > 0) m.shake = Math.max(0, m.shake - dt * 3.2);
+    camera.position.set(CAM_BASE.x + (Math.random() - 0.5) * m.shake * 0.45, CAM_BASE.y + (Math.random() - 0.5) * m.shake * 0.35, CAM_BASE.z);
     camera.lookAt(CAM_LOOK);
-    fx.update(dt, camera);
 
     emitHud(m);
   });
@@ -177,19 +188,23 @@ export function GameWorld({ assets, mode, paused }: { assets: LoadResult; mode: 
   function handlePlayer(now: number) {
     const inp = readInput();
     if (f1.dead) return;
-    if (inp.dodge) return f1.dodge(now);
-    if (inp.backflip) return f1.backflip(now);
-    if (f1.isLocked && !f1.isAttacking) return; // in hitstun
+    if (inp.dodge) {
+      if (f1.dodge(now)) sfx.play("whoosh");
+      return;
+    }
+    if (inp.backflip) {
+      if (f1.backflip(now)) sfx.play("jump");
+      return;
+    }
     if (inp.block) {
       f1.setBlock(true);
     } else {
       f1.setBlock(false);
       f1.moveIntent(inp.moveDir);
-      if (inp.jump) f1.jump();
+      if (inp.jump && f1.jump()) sfx.play("jump");
     }
-    if (inp.attack) {
-      if (inp.attack === "fireball") f1.attack("fireball");
-      else f1.attack(inp.attack);
+    if (inp.attack && f1.attack(inp.attack)) {
+      sfx.play(inp.attack === "fireball" ? "fireball" : "whoosh");
     }
   }
 
@@ -199,27 +214,30 @@ export function GameWorld({ assets, mode, paused }: { assets: LoadResult; mode: 
     const dist = f1.x - f2.x;
     const adist = Math.abs(dist);
     const toFoe = (Math.sign(dist) || 1) as -1 | 1;
+    const atk = (id: string) => {
+      if (f2.attack(id)) sfx.play(id === "fireball" ? "fireball" : "whoosh");
+    };
 
     if (now > a.next) {
       a.next = now + 140 + Math.random() * 320; // quicker decisions = proactive
       if (f1.isAttacking && adist < 2.0 && Math.random() < 0.45) {
-        if (Math.random() < 0.4) f2.dodge(now);
+        if (Math.random() < 0.4 && f2.dodge(now)) sfx.play("whoosh");
         else a.blockUntil = now + 240 + Math.random() * 200;
         a.move = 0;
       } else if (adist > 1.7) {
         a.move = toFoe;
         a.blockUntil = 0;
-        if (adist > 4 && Math.random() < 0.25) f2.attack("fireball"); // zone from afar
+        if (adist > 4 && Math.random() < 0.25) atk("fireball"); // zone from afar
       } else {
         a.move = 0;
         a.blockUntil = 0;
         const r = Math.random();
-        if (r < 0.26) f2.attack("punch");
-        else if (r < 0.46) f2.attack("kick");
-        else if (r < 0.6) f2.attack("heavy");
-        else if (r < 0.72) f2.attack("combo");
-        else if (r < 0.8) f2.attack("upper");
-        else if (r < 0.86) f2.attack("smash");
+        if (r < 0.26) atk("punch");
+        else if (r < 0.46) atk("kick");
+        else if (r < 0.6) atk("heavy");
+        else if (r < 0.72) atk("combo");
+        else if (r < 0.8) atk("upper");
+        else if (r < 0.86) atk("smash");
         else if (r < 0.92) f2.backflip(now);
         else a.move = -toFoe as -1 | 1;
       }
@@ -259,17 +277,16 @@ export function GameWorld({ assets, mode, paused }: { assets: LoadResult; mode: 
       m.combo[who] += 1;
       m.comboMs[who] = RULES.comboWindow;
     }
-    m.shake = Math.min(1.2, m.shake + (def.comboScaled ? 0.95 : def.id === "kick" ? 0.6 : 0.4));
-    const mid = new THREE.Vector3((attacker.position.x + defender.position.x) / 2, 1.05 + Math.max(attacker.position.y, defender.position.y) * 0.5, 0.1);
-    const col = wasBlocking ? "#9fd0ff" : def.comboScaled ? "#ffd84a" : who === "p1" ? "#6fe9ff" : "#ff8aa0";
-    fx.burst(mid, def.id !== "punch" && !wasBlocking, col);
+    m.shake = Math.min(1.1, m.shake + (def.comboScaled ? 0.8 : def.id === "kick" ? 0.5 : 0.32));
+    sfx.play(wasBlocking ? "block" : def.id === "kick" || def.id === "sweep" ? "kick" : "hit");
   }
 
   function endRound(m: MatchState, winner: "p1" | "p2" | null, label: string) {
     m.phase = "roundEnd";
     m.phaseT = 2.6;
     m.announce = label;
-    m.shake = Math.min(1.3, m.shake + 0.8);
+    m.shake = Math.min(1.2, m.shake + 0.7);
+    if (winner) sfx.play("ko");
     if (winner === "p1") {
       m.p1Rounds += 1;
       f2.die(1);

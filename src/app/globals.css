@@ -24,6 +24,16 @@ body {
   @apply inline-flex min-w-[1.6rem] items-center justify-center rounded-md border border-white/20 bg-white/10 px-1.5 py-0.5 text-xs font-bold text-white shadow-sm;
 }
 
+@keyframes roundwipe {
+  0% { opacity: 0; }
+  38% { opacity: 1; }
+  66% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.animate-roundwipe {
+  animation: roundwipe 1s ease-in-out forwards;
+}
+
 .angled-bar {
   clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 100%, 0 100%);
 }

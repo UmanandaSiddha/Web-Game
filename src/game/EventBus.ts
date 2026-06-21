@@ -10,6 +10,7 @@ type Events = {
   shake: number; // intensity
   loadProgress: { loaded: number; total: number; label: string };
   assetsMissing: string[]; // list of clip names that fell back
+  roundWipe: void; // a black wipe that hides the between-rounds reset snap
   // UI -> world
   startMatch: { mode: GameMode };
   pause: boolean;

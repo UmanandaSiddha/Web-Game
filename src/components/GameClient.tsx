@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { bus } from "@/game/EventBus";
+import { sfx } from "@/game/Sound";
 import { loadAssets, type LoadResult } from "@/game/loadAssets";
 import type { AnimState, GameMode, HudSnapshot } from "@/game/types";
 import { MainMenu } from "./MainMenu";
@@ -29,15 +30,18 @@ export function GameClient() {
   const [missing, setMissing] = useState<AnimState[]>([]);
   const [source, setSource] = useState<"mixamo" | "fallback">("fallback");
   const [showSetup, setShowSetup] = useState(false);
+  const [wipeKey, setWipeKey] = useState(0);
   const assetsRef = useRef<LoadResult | null>(null);
 
   // pipe HUD snapshots from the 3D world to React
   useEffect(() => {
     const off = bus.on("hud", setHud);
     const offProg = bus.on("loadProgress", ({ label }) => setLoadLabel(`Loading ${label}…`));
+    const offWipe = bus.on("roundWipe", () => setWipeKey((k) => k + 1));
     return () => {
       off();
       offProg();
+      offWipe();
     };
   }, []);
 
@@ -52,6 +56,8 @@ export function GameClient() {
   }, [screen]);
 
   const start = useCallback(async (m: GameMode) => {
+    sfx.resume(); // unlock audio on this user gesture
+    sfx.play("ui");
     setMode(m);
     setScreen("loading");
     setPaused(false);
@@ -67,6 +73,7 @@ export function GameClient() {
   }, []);
 
   const toMenu = useCallback(() => {
+    sfx.play("ui");
     setPaused(false);
     setHud(null);
     setScreen("menu");
@@ -74,6 +81,8 @@ export function GameClient() {
   }, []);
 
   const rematch = useCallback(() => {
+    sfx.resume();
+    sfx.play("ui");
     setPaused(false);
     bus.emit("rematch", undefined);
   }, []);
@@ -90,6 +99,11 @@ export function GameClient() {
 
       {screen === "playing" && hud && <HUD hud={hud} mode={mode} />}
       {screen === "playing" && !matchOver && !paused && <ControlsBar />}
+
+      {/* black wipe that hides the between-rounds reset */}
+      {screen === "playing" && wipeKey > 0 && (
+        <div key={wipeKey} className="animate-roundwipe pointer-events-none absolute inset-0 z-40 bg-black" />
+      )}
 
       {screen === "playing" && paused && !matchOver && (
         <PauseOverlay onResume={() => setPaused(false)} onRestart={rematch} onMenu={toMenu} />

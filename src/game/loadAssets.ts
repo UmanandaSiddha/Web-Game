@@ -69,16 +69,57 @@ function normalizeClip(clip: THREE.AnimationClip) {
   for (const track of clip.tracks) track.name = track.name.replace(/:/g, "");
 }
 
+/** Rest-pose world position of the hips bone within an (un-added) hierarchy. */
+function hipsRest(obj: THREE.Object3D): THREE.Vector3 | null {
+  obj.updateWorldMatrix(true, true);
+  let bone: THREE.Object3D | null = null;
+  obj.traverse((o) => {
+    if (!bone && /Hips$/i.test(o.name)) bone = o;
+  });
+  return bone ? (bone as THREE.Object3D).getWorldPosition(new THREE.Vector3()) : null;
+}
+
 /**
- * Drop the root (hips) position track entirely so the fighter animates in place.
- * The hips track is in the clip's native units (Mixamo cm); applying it to a glb
- * skeleton (metres) would fling the character off-screen. Removing it keeps the
- * bone at its correct bind-pose height — movement & jumps are driven in code.
- * Bone rotations are unit-independent, so they're untouched.
+ * Reconcile a clip's root (hips) position with the target skeleton.
+ *
+ * The clip's hips track is in its own units (Mixamo cm); the glb skeleton is in
+ * metres. Naively applying it flings the character off-screen. We instead rescale
+ * the track by the ratio of the two skeletons' rest hip heights, so motion is
+ * preserved at the correct scale.
+ *
+ *  - "strip" (locomotion/attacks): lock X/Z to centre, keep a scaled vertical bob → in place.
+ *  - "keep"  (KO / get-up): keep all three scaled → the body actually falls to the floor.
+ *
+ * If the hip heights can't be measured we fall back to dropping the track (safe in-place).
  */
-function lockRoot(clip: THREE.AnimationClip, mode: "strip" | "keepY" | "keep") {
-  if (mode === "keep") return clip;
-  clip.tracks = clip.tracks.filter((t) => !/Hips\.position$/i.test(t.name));
+function reconcileRoot(
+  clip: THREE.AnimationClip,
+  mode: "strip" | "keepY" | "keep",
+  charHips: THREE.Vector3 | null,
+  clipHips: THREE.Vector3 | null
+) {
+  const track = clip.tracks.find((t) => /Hips\.position$/i.test(t.name)) as THREE.VectorKeyframeTrack | undefined;
+  if (!track) return clip;
+
+  if (!charHips || !clipHips || clipHips.y < 0.0001) {
+    clip.tracks = clip.tracks.filter((t) => t !== track); // can't scale safely → in place
+    return clip;
+  }
+
+  const ratio = charHips.y / clipHips.y;
+  const v = track.values; // [x,y,z, ...]
+  const fx = v[0], fz = v[2]; // clip first-frame horizontal
+  for (let i = 0; i < v.length; i += 3) {
+    if (mode === "keep") {
+      v[i] = charHips.x + (v[i] - fx) * ratio;
+      v[i + 1] = charHips.y + (v[i + 1] - clipHips.y) * ratio;
+      v[i + 2] = charHips.z + (v[i + 2] - fz) * ratio;
+    } else {
+      v[i] = charHips.x; // lock horizontal -> in place
+      v[i + 1] = charHips.y + (v[i + 1] - clipHips.y) * ratio; // scaled vertical bob
+      v[i + 2] = charHips.z;
+    }
+  }
   return clip;
 }
 
@@ -159,6 +200,7 @@ async function loadMixamo(
   const model = (await loadCharacter(modelBase)) ?? (await loadCharacter(fallbackModelBase));
   if (!model) return null;
   stripColons(model); // make glb "mixamorig:Hips" match fbx clip "mixamorigHips"
+  const charHips = hipsRest(model); // rest hip height in the character's units
 
   const raw: Partial<Record<AnimState, THREE.AnimationClip>> = {};
   for (const def of CLIPS) {
@@ -166,10 +208,11 @@ async function loadMixamo(
     // optional clips legitimately 404 — only 1 retry so we don't stall on absent files
     const anim = await tryLoadFBX(`${MODELS_BASE}/${def.file}`, def.fallback === def.state ? 4 : 2);
     const clip = anim?.animations[0];
-    if (!clip) continue;
+    if (!clip || !anim) continue;
+    const clipHips = hipsRest(anim); // rest hip height in the clip's units (for rescaling)
     clip.name = def.state;
     normalizeClip(clip);
-    raw[def.state] = lockRoot(clip, def.rootMotion);
+    raw[def.state] = reconcileRoot(clip, def.rootMotion, charHips, clipHips);
   }
 
   const { clips, missing } = resolve(raw);
@@ -200,7 +243,8 @@ async function loadFallback(onStep: (label: string) => void): Promise<LoadedChar
     if (c) {
       const clip = c.clone();
       clip.name = state;
-      raw[state as AnimState] = lockRoot(clip, "strip");
+      clip.tracks = clip.tracks.filter((t) => !/Hips\.position$/i.test(t.name)); // in place
+      raw[state as AnimState] = clip;
     }
   }
   const { clips, missing } = resolve(raw);
