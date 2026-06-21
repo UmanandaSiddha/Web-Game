@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-display: "Russo One", "Impact", sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #050308;
+  color: #fff;
+  overflow: hidden;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+}
+
+/* Crisp kbd hint chips */
+.kbd {
+  @apply inline-flex min-w-[1.6rem] items-center justify-center rounded-md border border-white/20 bg-white/10 px-1.5 py-0.5 text-xs font-bold text-white shadow-sm;
+}
+
+.angled-bar {
+  clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 100%, 0 100%);
+}
+.angled-bar-r {
+  clip-path: polygon(14px 0, 100% 0, 100% 100%, 0 100%);
+}

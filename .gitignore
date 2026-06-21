@@ -1,0 +1,44 @@
+# ---- dependencies ----
+/node_modules
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# ---- next.js ----
+/.next/
+/out/
+/build
+next-env.d.ts
+
+# ---- testing / verification ----
+/coverage
+
+# ---- production / misc ----
+.DS_Store
+Thumbs.db
+*.pem
+
+# ---- debug logs ----
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ---- env files ----
+.env
+.env*.local
+
+# ---- typescript ----
+*.tsbuildinfo
+
+# ---- editors ----
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# ---- 3D character / animation assets ----
+# Large binaries. Mixamo's license restricts redistributing the raw files, so they
+# are not committed. The game auto-falls-back to a CC0 placeholder without them.
+# See public/models/README.md to add your own. Delete these lines to commit assets.
+/public/models/*.fbx
+/public/models/*.glb
