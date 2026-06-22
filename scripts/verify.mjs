@@ -1,7 +1,7 @@
 import puppeteer from "puppeteer-core";
 
 const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const URL = "http://localhost:3000/";
+const URL = process.env.GAME_URL || "http://localhost:3000/";
 const OUT = process.argv[2] || "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\webgame-shot.png";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
